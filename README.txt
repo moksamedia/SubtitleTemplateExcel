@@ -40,3 +40,9 @@ Known Issues:
 - timecode validation of large spreadsheets is very slow on the mac; I
   may be doing some redundant validation but the PC implementation of the
   Visual Basic interpreter also appears to be much faster
+
+I have included two files called "Sheet Macros - Reference Only" and "Module Macros - Reference Only"
+whose purpose is simply to allow github users to view the Visual Basic source embedded in the
+Excel spreadsheet without having to download the repository--BUT THESE ARE NOT USED AT ALL
+BY THE SPREADSHEET ITSELF.
+
