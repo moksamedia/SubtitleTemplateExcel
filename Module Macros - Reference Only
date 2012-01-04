@@ -1,0 +1,445 @@
+
+'Calculated the duration between two timecodes in seconds
+Function TCDurationSeconds(tc1 As String, tc2 As String, Optional fps As Double = 30)
+
+    Dim frames1 As Long
+    Dim frames2 As Long
+    
+    frames1 = TCToFrames(tc1, fps)
+    frames2 = TCToFrames(tc2, fps)
+
+    TCDurationSeconds = (frames2 - frames1) / fps
+
+End Function
+
+'Converts a timcode in "number format" without colons or semicolons to number of frames
+Function NumberToFrames(numTC As Long, Optional fps As Double = 30, Optional drop As Boolean = False)
+
+    
+    Dim hours As Integer
+    Dim minutes As Integer
+    Dim seconds As Integer
+    Dim frames As Integer
+        
+    'Extracts the parts of the timecode from the number
+    NumberHelper numTC, hours, minutes, seconds, frames
+ 
+    If drop Then
+    
+        Dim totalMinues As Integer
+        totalMinues = 60 * hours + minutes
+        NumberTCToFrames = 108000 * hours + 1800 * minutes + 30 * seconds + frames - 2 * (totalMinutes - totalMinutes \ 10)
+
+    Else
+    
+        NumberToFrames = (3600 * hours + 60 * minutes + seconds) * fps + frames
+        
+    End If
+    
+End Function
+
+'Converts a timcode in "number format" without colons or semicolons to a string timecode
+Function NumberToTC(numTC As Long, Optional fps As Double = 30, Optional drop As Boolean = False)
+    
+    Dim hours As Integer
+    Dim minutes As Integer
+    Dim seconds As Integer
+    Dim frames As Integer
+
+    'Extracts the parts of the timecode from the number
+    NumberHelper numTC, hours, minutes, seconds, frames
+    
+    If drop Then
+    
+        NumberToTC = GetStringForNum(hours) & ":" & GetStringForNum(minutes) & ":" & GetStringForNum(seconds) & ";" & GetStringForNum(frames)
+
+    Else
+    
+        NumberToTC = GetStringForNum(hours) & ":" & GetStringForNum(minutes) & ":" & GetStringForNum(seconds) & ":" & GetStringForNum(frames)
+    
+    End If
+
+End Function
+
+'Used by functions above to extract hours, minutes, seconds, and frames frome a timecode in "number format" without colons
+Sub NumberHelper(numTC As Long, hours As Integer, minutes As Integer, seconds As Integer, frames As Integer)
+
+    If numTC >= 1000000 Then
+    
+        hours = numTC \ 1000000
+        minutes = (numTC Mod 1000000) \ 10000
+        seconds = (numTC Mod 10000) \ 100
+        frames = numTC Mod 100
+    
+    ElseIf numTC >= 10000 Then
+        
+        hours = 0
+        minutes = numTC \ 10000
+        seconds = (numTC Mod 10000) \ 100
+        frames = numTC Mod 100
+    
+    ElseIf numTC >= 100 Then
+        
+        hours = 0
+        minutes = 0
+        seconds = numTC \ 100
+        frames = numTC Mod 100
+
+    Else
+    
+        hours = 0
+        minutes = 0
+        seconds = 0
+        frames = numTC
+        
+    End If
+   
+End Sub
+
+' Adds two timecodes. Returns the results in drop-frame or non-drop frame according
+' to the format of the first timecode
+Function TCAdd(tc1 As String, tc2 As Variant, Optional fps As Double = 30)
+
+    Dim newFrames As Long
+    Dim framesToAdd As Long
+    
+    If TypeName(tc2) = "String" Then
+    
+        framesToAdd = TCToFrames(CStr(tc2), fps)
+    
+    Else
+    
+        framesToAdd = NumberToFrames(CLng(tc2), fps)
+    
+    End If
+    
+    newFrames = TCToFrames(tc1, fps) + framesToAdd
+    
+    If TCIsDropFrame(tc1) Then
+        
+        TCAdd = FramesToTCDropFrame(newFrames)
+        
+    Else
+    
+        TCAdd = FramesToTCNonDropFrame(newFrames, fps)
+    
+    End If
+
+End Function
+
+' Subtracts two timecodes. Returns the results in drop-frame or non-drop frame according
+' to the format of the first timecode
+Function TCSubtract(tc1 As String, tc2 As String, Optional fps As Double = 30)
+    
+    Dim newFrames As Long
+       
+    Dim framesToSubtract As Long
+    
+    If TypeName(tc2) = "String" Then
+    
+        framesToSubtract = TCToFrames(CStr(tc2), fps)
+    
+    Else
+    
+        framesToSubtract = NumberToFrames(CLng(tc2), fps)
+    
+    End If
+
+    newFrames = TCToFrames(tc1, fps) - framesToSubtract
+    
+    If TCIsDropFrame(tc1) Then
+        
+        TCSubtract = FramesToTCDropFrame(newFrames)
+        
+    Else
+    
+        TCSubtract = FramesToTCNonDropFrame(newFrames, fps)
+    
+    End If
+    
+End Function
+
+' Multiplies timecode by a given factor.
+Function TCMultiply(tc As String, factor As Double, Optional fps As Double = 30)
+
+    Dim newFrames As Long
+       
+    newFrames = TCToFrames(tc, fps) * factor
+    
+    If TCIsDropFrame(tc) Then
+        
+        TCSubtract = FramesToTCDropFrame(newFrames)
+        
+    Else
+    
+        TCSubtract = FramesToTCNonDropFrame(newFrames, fps)
+    
+    End If
+
+
+End Function
+
+' Divides timecode by a given divisor
+Function TCDivide(tc As String, divisor As Double, Optional fps As Double = 30)
+
+    Dim newFrames As Long
+       
+    newFrames = TCToFrames(tc, fps) / divisor
+    
+    If TCIsDropFrame(tc) Then
+        
+        TCSubtract = FramesToTCDropFrame(newFrames)
+        
+    Else
+    
+        TCSubtract = FramesToTCNonDropFrame(newFrames, fps)
+    
+    End If
+
+End Function
+
+'Convert a timecode to total frames
+Function TCToFrames(tc As String, Optional fps As Double = 30)
+
+    Dim totalFrames As Long
+    totalFrames = 0
+
+    Dim tcHours As Integer
+    Dim tcMinutes As Integer
+    Dim tcSeconds As Integer
+    Dim tcFrames As Integer
+
+    
+    ExtractTCAndValidate tcHours, tcMinutes, tcSeconds, tcFrames, tc, fps
+    
+    If Not TCIsDropFrame(tc) Then
+    
+        totalFrames = (3600 * tcHours + 60 * tcMinutes + tcSeconds) * fps + tcFrames
+    
+    Else
+       
+        'This algorithm is borrowed from Andrew Duncan's page: http://www.andrewduncan.ws/Timecodes/Timecodes.html
+        'Drop-frame timecodes are assumed to be 30 fps
+        
+        Dim totalMinues As Integer
+        totalMinutes = 60 * tcHours + tcMinutes
+        
+        totalFrames = 108000 * CLng(tcHours) + 1800 * CLng(tcMinutes) + 30 * CLng(tcSeconds) + CLng(tcFrames) - 2 * CLng((totalMinutes - totalMinutes \ 10))
+
+    End If
+    
+    
+    TCToFrames = totalFrames
+
+End Function
+
+'Convert total frames to drop timecode
+Function FramesToTCDropFrame(frameNumber As Long)
+
+    'This algorithm is borrowed from Andrew Duncan's page: http://www.andrewduncan.ws/Timecodes/Timecodes.html
+    'Drop-frame timecodes are assumed to be 30 fps
+    
+    Dim D As Double
+    Dim M As Double
+    Dim frames As Long
+    Dim seconds As Integer
+    Dim minutes As Integer
+    Dim hours As Integer
+      
+    D = frameNumber \ 17982
+    M = frameNumber Mod 17982
+      
+    frameNumber = frameNumber + 18 * D + 2 * ((M - 2) \ 1789)
+      
+    frames = frameNumber Mod 30
+    seconds = (frameNumber \ 30) Mod 60
+    minutes = ((frameNumber \ 30) \ 60) Mod 60
+    hours = (((frameNumber \ 30) \ 60) \ 60) Mod 24
+    
+    FramesToTCDropFrame = GetStringForNum(hours) & ":" & GetStringForNum(minutes) & ":" & GetStringForNum(seconds) & ";" & GetStringForNum(frames)
+
+End Function
+
+'Convert total frames to non-drop timecode
+Function FramesToTCNonDropFrame(frameNumber As Long, Optional fps As Double = 30)
+
+    Dim frames As Integer
+    Dim seconds As Integer
+    Dim minutes As Integer
+    Dim hours As Integer
+
+    
+    frames = frameNumber Mod fps
+    seconds = (frameNumber \ fps) Mod 60
+    minutes = ((frameNumber \ fps) \ 60) Mod 60
+    hours = (((frameNumber \ fps) \ 60) \ 60) Mod 24
+    
+    FramesToTCNonDropFrame = GetStringForNum(hours) & ":" & GetStringForNum(minutes) & ":" & GetStringForNum(seconds) & ":" & GetStringForNum(frames)
+
+
+
+End Function
+
+'converts "x" to string, trims any whitespace, and pads with a zero if x < 10
+Private Function GetStringForNum(x As Variant)
+
+    Dim aString As String
+    
+    aString = Trim(Str(x))
+    
+    If x < 10 Then
+    
+        aString = "0" & aString
+    
+    End If
+    
+    GetStringForNum = aString
+
+End Function
+
+Private Function GetStringForMilliseconds(x As Variant)
+
+    Dim aString As String
+    
+    aString = Trim(Str(x))
+    
+    If x < 10 Then
+    
+        aString = "00" & aString
+        
+    ElseIf x < 100 Then
+    
+        aString = "0" & aString
+    
+    End If
+    
+    GetStringForMilliseconds = aString
+
+End Function
+
+Function TCIsDropFrame(tc As String)
+
+    If Mid(tc, 9, 1) = ":" Then
+        TCIsDropFrame = False
+    Else
+        TCIsDropFrame = True
+    End If
+
+End Function
+
+
+
+Function TCToMillisecondsFormat(timecode As String) As String
+
+    Dim hours As Integer
+    Dim minutes As Integer
+    Dim seconds As Integer
+    Dim frames As Integer
+    Dim milliseconds As Double
+    Dim result As String
+    
+    ExtractTCAndValidate hours, minutes, seconds, frames, timecode, 30
+    
+    milliseconds = frames / 30 * 1000
+    
+    result = GetStringForNum(hours) & ":" & GetStringForNum(minutes) & ":" & GetStringForNum(seconds) & "." & GetStringForMilliseconds(Round(milliseconds))
+    
+    TCToMillisecondsFormat = result
+    
+End Function
+
+Sub ExtractTCAndValidate(tcHours As Integer, tcMinutes As Integer, tcSeconds As Integer, tcFrames As Integer, tc As String, fps As Double)
+    
+    TCValidate tc, Error, fps, False
+    
+    'Extract the hours, minutes, seconds, and frames
+    tcHours = Val(Mid(tc, 1, 2))
+    tcMinutes = Val(Mid(tc, 4, 2))
+    tcSeconds = Val(Mid(tc, 7, 2))
+    tcFrames = Val(Mid(tc, 10, 2))
+    
+End Sub
+
+'Returns true or false, no messages and no error strings
+Function TCIsValid(tc As String, Optional fps As Double = 30)
+
+    Dim Error As String
+    
+    TCIsValid = TCValidate(tc, Error, fps, False)
+
+End Function
+
+Function TCValidate(tc As String, Optional Error As String, Optional fps As Double = 30, Optional showMessage As Boolean = False)
+
+    'Make sure timecode is the right length
+    If Len(tc) <> 11 Then
+        Error = "(" & tc & ") is wrong length."
+        If showMessage Then MsgBox "Warning: Timecode is wrong length. TC = " & tc
+        TCValidate = False
+        Exit Function
+    End If
+    
+    'Make sure the first and second colons are there
+    If Mid(tc, 3, 1) <> ":" Or Mid(tc, 6, 1) <> ":" Then
+        Error = "(" & tc & ") is missing a colon."
+        If showMessage Then MsgBox "Warning: Timecode appears to be invalid because a colon is missing or misplaced: " & tc
+        TCValidate = False
+        Exit Function
+    End If
+    
+    'Check to see if the last separator is a colon or a semicolon, and if neither
+    'throw error
+    Select Case Mid(tc, 9, 1)
+        Case Is = ";"
+            tcDropFrame = True
+        Case Is = ":"
+            tcDropFrame = False
+        Case Else
+            TCValidate = False
+            Error = "(" & tc & ") is missing the last colon or semicolon"
+            If showMessage Then MsgBox "Warning: Timecode appears to be invalid because the last semicolon or colon is missin: " & tc
+            Exit Function
+    End Select
+    
+    If Not IsNumeric(Mid(tc, 1, 2)) Then
+        TCValidate = False
+         Error = "(" & tc & ") has invalid hours."
+        If showMessage Then MsgBox "Warning: Timecode has invalid hours: " & tc
+        Exit Function
+    End If
+    
+     If Not IsNumeric(Mid(tc, 4, 2)) Then
+        TCValidate = False
+         Error = "(" & tc & ") has invalid minutes."
+        If showMessage Then MsgBox "Warning: Timecode has invalid minutes: " & tc
+        Exit Function
+    End If
+    
+    If Not IsNumeric(Mid(tc, 7, 2)) Then
+        TCValidate = False
+         Error = "(" & tc & ") has invalid seconds."
+        If showMessage Then MsgBox "Warning: Timecode has invalid seconds: " & tc
+        Exit Function
+    End If
+    
+    If Not IsNumeric(Mid(tc, 10, 2)) Then
+        TCValidate = False
+         Error = "(" & tc & ") has invalid frames."
+        If showMessage Then MsgBox "Warning: Timecode has invalid frames: " & tc
+        Exit Function
+    End If
+    
+    
+    'Reality check: make sure we don't have more frames than the given frames per second
+    tcFrames = Val(Mid(tc, 10, 2))
+     
+    If tcFrames > fps Then
+        TCValidate = False
+        Error = "(" & tc & ") has more frames than the frames per second allow."
+        If showMessage Then MsgBox "Warning: Timecode appears to be invalid because there are more frames than the fps: " & tc
+        Exit Function
+    End If
+    
+    TCValidate = True
+    
+End Function

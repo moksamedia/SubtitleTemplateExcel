@@ -1,0 +1,1150 @@
+'Cell that holds the offset value timecode, the amount by which to offset
+Private Const OffsetValueCell = "L7"
+
+'Cell that holds the range to offset (if empty, selection is used)
+Private Const OffsetRangeCell = "M7"
+
+'The cell of the first timecode in column A
+Private Const firstTCCell As String = "A10"
+
+'Range that holds (likely) all timecodes
+Private Const TCCellRange As String = "A10:B2000"
+
+'Row and Column Constants that tell script where to find data
+Private Const StartTCRow As Integer = 10
+Private Const StartTCColumn As Integer = 1
+Private Const EndTCColumn As Integer = 2
+Private Const TitleTextColumn As Integer = 3
+Private Const SpeakerIDColumn As Integer = 4
+Private Const SpokenWordsColumn As Integer = 5
+Private Const DurationColumn As Integer = 12
+Private Const WPSColumn As Integer = 13
+
+'Set to TRUE if subtitles are broken down into Titles, Spearker IDs, and Spoken words
+Private Const MultiColumnSubtitles = True
+
+'Global vars to hold words-per-second color threshold values
+Dim WordsPerSecondRedThreshold As Double
+Dim WordsPerSecondYellowThreshold As Double
+
+'Cell that holds the value above which words-per-second turns red
+Private Const WPSRedThresholdCell As String = "L2"
+
+'Cell that holds the value above which wps turns yello
+Private Const WPSYellowThresholdCell As String = "L3"
+
+Private Type RangeAndValue
+
+    Val As Variant
+    Addr As String
+
+End Type
+
+Private UndoStack As RangeAndValue
+
+Private Sub Worksheet_Open()
+    
+End Sub
+
+Sub Worksheet_Change(ByVal Target As Range)
+     
+    UndoStack.Addr = Target.Address
+    UndoStack.Val = Target.Value
+        
+    'If there's no colon in the value, then assume it's a timecode entered in
+    'number format and convert
+ 
+    ValidateCell Target
+    
+      Application.OnUndo "Undo", "Sheet1.MyUndo"
+
+    
+End Sub
+
+
+Sub MyUndo()
+
+
+End Sub
+
+Sub UpdateWPSFormat()
+
+    Dim aRange As Range
+    Set aRange = Range("M10:M2000")
+    
+    Dim aCell As Range
+    
+    For Each aCell In aRange
+    
+        If Not IsEmpty(aCell) Then FormatWordsPerSecondCell aCell
+    
+    Next aCell
+
+End Sub
+
+Sub FindNextError()
+
+    Dim aCell As Range
+    
+    Set aCell = activeCell
+    
+    'If the active cell is not in the timecode range, start at the top
+    If Intersect(aCell, Range(TCCellRange)) Is Nothing Then
+        
+        Set aCell = Range(firstTCCell)
+        
+    End If
+    
+    'If we are already on an error, skip to the next cell
+    If aCell.Interior.Color = RGB(255, 0, 0) Or aCell.Interior.Color = RGB(255, 255, 0) Then
+    
+        GetNextCell aCell
+    
+    End If
+    
+    Do While Not IsEmpty(aCell)
+    
+        If aCell.Interior.Color = RGB(255, 0, 0) Or aCell.Interior.Color = RGB(255, 255, 0) Then
+        
+            aCell.Select
+            
+            Exit Sub
+        
+        End If
+        
+        GetNextCell aCell
+    
+    Loop
+    
+    MsgBox "No Error Found."
+
+End Sub
+
+Sub OffsetSelectedTimeCodes()
+
+    Dim selectedRange As Range
+    Dim aCell As Range
+    Dim offsetString As String
+    Dim newFrames As Long
+    
+    'If no range is entered, then use selection
+    If IsEmpty(Range(OffsetRangeCell)) Then
+    
+        Set selectedRange = Selection
+    
+    'Otherwise set the range to offest to the range entered in the cell
+    Else
+    
+        Set selectedRange = Range(Range(OffsetRangeCell).Value)
+    
+    End If
+    
+    'set aCell to the first cell
+    Set aCell = selectedRange.Cells(1, 1)
+  
+    'offsetString is the timecode string that determines the amount of offset
+    offsetString = Range(OffsetValueCell).Value
+    
+    
+    'is the offset a negative value?
+    If Mid(offsetString, 1, 1) = "-" Then
+        
+        'remove the minus
+        offsetString = Right(offsetString, Len(offsetString) - 1)
+     
+        'check validation
+        If Not TCValidate(offsetString) Then
+    
+            MsgBox "Offset Timecode does not appear to be valid."
+        
+            Exit Sub
+    
+        End If
+
+        'iterate through the selected range of cells and apply the offset
+        For Each aCell In selectedRange
+    
+            If Not Intersect(aCell, Range(TCCellRange)) Is Nothing Then
+        
+                aCell.Value = TCSubtract(aCell.text, offsetString)
+        
+            End If
+    
+        Next aCell
+    
+    'we're adding the offset
+    Else
+    
+        'check timecode validation
+        If Not TCValidate(offsetString) Then
+    
+            MsgBox "Offset Timecode does not appear to be valid."
+        
+            Exit Sub
+    
+        End If
+
+        'iterate through the cells and add the offset
+        For Each aCell In selectedRange
+    
+            If Not Intersect(aCell, Range(TCCellRange)) Is Nothing Then
+        
+                aCell.Value = TCAdd(aCell.Value, offsetString)
+        
+            End If
+    
+        Next aCell
+    
+    End If
+
+End Sub
+
+Function ValidateCell(Target As Range)
+
+    WordsPerSecondRedThreshold = Range(WPSRedThresholdCell).Value
+    WordsPerSecondYellowThreshold = Range(WPSYellowThresholdCell).Value
+
+    'Only validate cells in Columns A and B & Skip any rows above TC starting row
+    If Intersect(Target, Range("A:B")) Is Nothing Or Target.row < TCStartingRow Then
+        Exit Function
+ 
+    'Don't mess with ranges of multiple cells
+    ElseIf Target.Count > 1 Then
+        Exit Function
+        
+    'Skip empty cells
+    ElseIf IsEmpty(Target) Then
+        Exit Function
+        
+    Else
+    
+        If InStr(Target.Value, ":") = 0 Then
+    
+            Dim newTC As Long
+            Dim newTCString As String
+        
+            newTCString = Application.Substitute(Target.Value, ".", "00")
+        
+            newTC = CLng(Val(newTCString))
+    
+            Target.Value = NumberToTC(newTC, , True)
+        
+        End If
+
+    
+        'Validate that TC is formatted correctly
+        Dim Error As String
+    
+        If Not TCValidate(Target.Value, Error) Then
+            
+            FormatCellTCValidationError Target
+            Exit Function
+            
+        Else
+        
+            FormatCellOK Target
+        
+        End If
+        
+        'Mark cell as either drop frame or non-drop frame
+        If Not TCIsDropFrame(Target.Value) Then
+        
+            FormatCellNonDropFrame Target
+        
+        Else
+        
+            FormatCellDropFrame Target
+        
+        End If
+        
+        'Check Overlap
+        CheckOverlapHelper Target
+        
+        'Update Duration
+        UpdateDuration Target
+        
+    End If
+        
+
+End Function
+
+Sub ValidateAll()
+
+    Application.ScreenUpdating = False
+    
+    'TextBoxes("Text Box 13").text = ""
+    
+    Dim actCell As Range
+    
+    Set actCell = activeCell
+
+    Dim aCell As Range
+    
+    Set aCell = Range(firstTCCell)
+    
+    Do Until IsEmpty(aCell)
+    
+        aCell.Select
+    
+        ValidateCell aCell
+       
+        GetNextCell aCell
+    
+    Loop
+    
+    actCell.Select
+
+    Application.ScreenUpdating = True
+
+End Sub
+
+Sub ValidateSelected()
+    
+    Application.ScreenUpdating = False
+    
+    Dim CurCell As Range
+    
+    If Selection.Cells.Count > 0 Then
+        For Each CurCell In Selection
+            If Not IsEmpty(CurCell) Then ValidateCell CurCell
+        Next CurCell
+    End If
+
+    Application.ScreenUpdating = True
+
+End Sub
+
+'Concenience function that selects all timecode and subtitle cells
+Sub SelectAllUsedCells()
+
+    Dim rangeToSelect As Range
+
+    Dim lastCell As Range
+    Dim firstCell As Range
+    
+    'search for the last cell by starting at the first cell
+    FirstTCCellRange lastCell
+    GetLastUsedCell lastCell
+    
+    'save the range of the first cell
+    FirstTCCellRange firstCell
+    
+    Set rangeToSelect = Range(firstCell, Cells(lastCell.row, SpokenWordsColumn))
+    
+    If Cells(1, TitleTextColumn).EntireColumn.Hidden = False Then
+    
+        Set rangeToSelect = Union(rangeToSelect, Range(Cells(firstCell.row, TitleTextColumn), Cells(lastCell.row, TitleTextColumn)))
+    
+    End If
+    
+    If Cells(1, SpeakerIDColumn).EntireColumn.Hidden = False Then
+    
+        Set rangeToSelect = Union(rangeToSelect, Range(Cells(firstCell.row, SpeakerIDColumn), Cells(lastCell.row, SpeakerIDColumn)))
+    
+    End If
+    
+    If Cells(1, SpokenWordsColumn).EntireColumn.Hidden = False Then
+    
+        Set rangeToSelect = Union(rangeToSelect, Range(Cells(firstCell.row, SpokenWordsColumn), Cells(lastCell.row, SpokenWordsColumn)))
+    
+    End If
+    
+        
+    rangeToSelect.Select
+    
+    
+End Sub
+
+'Returns a range with the first timecode cell
+Private Function FirstTCCellRange(aRange As Range)
+
+    Set aRange = Range(firstTCCell)
+
+End Function
+
+'Gets the next timecode cell
+Private Function GetNextCell(ByRef aCell As Range)
+
+    Dim nextCell As Range
+
+    'Is the cell in column A?
+    If Not Intersect(aCell, Range("A:A")) Is Nothing Then
+    
+        Set nextCell = aCell.Offset(0, 1)
+        
+    'Is the cell in column B?
+    ElseIf Not Intersect(aCell, Range("B:B")) Is Nothing Then
+    
+        Set nextCell = aCell.Offset(1, -1)
+                
+    End If
+    
+    Set aCell = nextCell
+   
+End Function
+
+'Gets the last used timecode cell
+Private Function GetLastUsedCell(aCell As Range)
+    
+   
+    Do While IsEndOfUsedCells(aCell) = False
+    
+        GetNextCell aCell
+    
+    Loop
+
+End Function
+
+'determines if aCell is the last used tc cell by
+'checking ahead 5 cells, and if they're all emtpy
+'then the cell is last (this is done in case there
+'happens to be an empty cell or four)
+Private Function IsEndOfUsedCells(aCell As Range)
+
+
+    Dim bCell As Range
+    
+    Set bCell = aCell
+
+    Dim i As Integer
+    
+    GetNextCell bCell
+    
+    For i = 0 To 5
+    
+        If Not IsEmpty(bCell) Then
+        
+            IsEndOfUsedCells = False
+            Exit Function
+        
+        End If
+        
+        GetNextCell bCell
+    
+    Next i
+
+    IsEndOfUsedCells = True
+
+End Function
+
+Private Function UpdateDuration(aCell As Range)
+
+    Dim previousCell As Range
+    Dim nextCell As Range
+    Dim duration As Double
+    Dim wc As Long
+    Dim subText As String
+    Dim durationCell As Range
+    Dim wpsCell As Range
+    
+    
+    'Below check which column bc we need to either calculate duration with next or
+    'previous cell, depending on if cell is first or second timecode
+    
+    'Is the cell in column A?
+    If Not Intersect(aCell, Range("A:A")) Is Nothing Then
+    
+        Set nextCell = aCell.Offset(0, 1)
+        
+        If Not IsEmpty(nextCell.Value) Then
+        
+            'duration
+            
+            duration = TCDurationSeconds(aCell.Value, nextCell.Value)
+            
+        Else
+        
+            Exit Function
+        
+        End If
+        
+    'Is the cell in column B?
+    ElseIf Not Intersect(aCell, Range("B:B")) Is Nothing Then
+    
+        Set previousCell = aCell.Offset(0, -1)
+    
+        If Not IsEmpty(previousCell.Value) Then
+        
+            'Duration
+            
+            duration = TCDurationSeconds(previousCell.Value, aCell.Value)
+                     
+        Else
+        
+            Exit Function
+       
+        End If
+    
+    'This shouldn't happen, throw error
+    Else
+        
+        MsgBox "Error: asked to validate cell not in column one or two."
+        
+    End If
+    
+    'Get cell that contains words per second for row
+    Set wpsCell = Cells(aCell.row, WPSColumn)
+    
+    'Get cell that contains duration
+    Set durationCell = Cells(aCell.row, DurationColumn)
+    
+    'Get the subtitle text so that we can count the words
+    subText = GetSubTextForRow(aCell.row)
+
+    'count the words
+    wc = CountWords(subText)
+    
+    'save the duration in the duraction cell
+    durationCell.Value = duration
+            
+    'format the duration cell
+    FormatDurationCell durationCell
+   
+   'duration of zero is a special case to avoid dividing by zero
+    If duration <> 0 Then
+        wpsCell.Value = wc / duration
+    Else
+        wpsCell.Value = 0
+    End If
+ 
+    FormatWordsPerSecondCell wpsCell
+
+
+End Function
+
+Private Function GetSubTextForRow(row As Integer)
+
+    If MultiColumnSubtitles Then
+
+        GetSubTextForRow = Cells(row, TitleTextColumn).Value & " " & Cells(row, SpeakerIDColumn).Value & " " & Cells(row, SpokenWordsColumn).Value
+
+    Else
+    
+        GetSubTextForRow = Cells(row, SpokenWordsColumn).Value
+    
+    End If
+
+End Function
+
+
+'Determines the previous and next cells needed to verify overlap
+Private Function CheckOverlapHelper(aCell As Range, Optional recur As Boolean = True)
+
+    Dim previousCell As Range
+    Dim nextCell As Range
+    
+    
+    'Is the cell A1, a special case because it has no previousCell
+    If Not Intersect(aCell, Range(firstTCCell)) Is Nothing Then
+         
+        CheckOverlapFirstCell aCell, aCell.Offset(0, 1)
+        
+        Exit Function
+    
+    End If
+
+
+    'Is the cell in column A?
+    If Not Intersect(aCell, Range("A:A")) Is Nothing Then
+    
+        Set previousCell = aCell.Offset(-1, 1)
+        Set nextCell = aCell.Offset(0, 1)
+        
+    'Is the cell in column B?
+    ElseIf Not Intersect(aCell, Range("B:B")) Is Nothing Then
+    
+        Set previousCell = aCell.Offset(0, -1)
+        Set nextCell = aCell.Offset(1, -1)
+        
+    'This shouldn't happen, throw error
+    Else
+        
+        MsgBox "Error: asked to validate cell not in column one or two."
+        
+    End If
+    
+    'Don't bother trying to evalutate overlap if one of the neighboring TCs is invalid
+    'If Not TCIsValid(previousCell.Value) Or Not TCIsValid(nextCell.Value) Then
+        
+    '    Exit Function
+        
+    'End If
+    
+    'Check overlap
+    CheckOverlap aCell, previousCell, nextCell, recur
+
+End Function
+
+'Checks the current cell with the previous and next cell to see if there is a TC overlap
+Private Function CheckOverlap(thisCell As Range, previousCell As Range, nextCell As Range, Optional recur As Boolean = True)
+
+    Dim thisCellFrames As Long
+    Dim previousCellFrames As Long
+    Dim nextCellFrames As Long
+    
+    'If previous and next cell are empty, there's no chance of overlap
+    If IsEmpty(previousCell.Value) And IsEmpty(nextCell.Value) Then
+    
+        FormatCellOK thisCell
+        
+        Exit Function
+    
+    End If
+    
+    
+    'If only previous cell is empty, then check overlap with next cell
+    If previousCell.Value = "" Then
+    
+        thisCellFrames = TCToFrames(thisCell.Value)
+        nextCellFrames = TCToFrames(nextCell.Value)
+        
+        If (thisCellFrames > nextCellFrames) Then
+        
+            FormatCellOverlapError thisCell
+            FormatCellOverlapError nextCell
+        
+        Else
+        
+            FormatCellOK thisCell
+            
+            If recur = True Then
+        
+                CheckOverlapHelper nextCell, False
+    
+            End If
+        
+        End If
+        
+        Exit Function
+    
+    End If
+    
+    
+    'If only next cell is empty, check overlap with previous cell
+    If nextCell.Value = "" Then
+    
+        thisCellFrames = TCToFrames(thisCell.Value)
+        previousCellFrames = TCToFrames(previousCell.Value)
+        
+        If (thisCellFrames < previousCellFrames) Then
+            
+            FormatCellOverlapError thisCell
+            FormatCellOverlapError previousCell
+                
+         Else
+        
+            FormatCellOK thisCell
+            
+            If recur = True Then
+        
+                CheckOverlapHelper previousCell, False
+    
+            End If
+        
+        End If
+        
+        Exit Function
+
+    End If
+    
+    
+    'At this point, the cell is known to have both a previous and next cell
+    
+    'Get the frames for the cell TCs
+    thisCellFrames = TCToFrames(thisCell.Value)
+    previousCellFrames = TCToFrames(previousCell.Value)
+    nextCellFrames = TCToFrames(nextCell.Value)
+    
+    'If current cell overlaps with next cell
+    If (thisCellFrames > nextCellFrames) Then
+             
+        FormatCellOverlapError thisCell
+        FormatCellOverlapError nextCell
+                     
+    End If
+        
+        
+    'If the current cell overlaps with previous cell
+    If (thisCellFrames < previousCellFrames) Then
+        
+        FormatCellOverlapError thisCell
+        FormatCellOverlapError previousCell
+    
+    End If
+    
+    'If there is no overlap
+    If thisCellFrames >= previousCellFrames And thisCellFrames <= nextCellFrames Then
+    
+       FormatCellOK thisCell
+        
+        'We need this to check the previous and next cells for overlap with their neighbors before we clear
+        'the error formatting
+        If recur = True Then
+        
+            CheckOverlapHelper previousCell, False
+            CheckOverlapHelper nextCell, False
+    
+        End If
+    
+    End If
+              
+
+End Function
+
+'The first cell is a special case because it has no previous cell, so it was simpler
+'to split it out into a separate function
+Private Function CheckOverlapFirstCell(thisCell As Range, nextCell As Range)
+
+    Dim thisCellFrames As Long
+    Dim nextCellFrames As Long
+    
+    'If next cell is empty, there's no chance of overlap
+    If IsEmpty(nextCell.Value) Or Not TCIsValid(nextCell.Value) Then
+        
+        FormatCellOK thisCell
+        
+        Exit Function
+    
+    End If
+    
+    'Get the frame counts
+    thisCellFrames = TCToFrames(thisCell.Value)
+    nextCellFrames = TCToFrames(nextCell.Value)
+    
+    'Check overlap
+    If (thisCellFrames >= nextCellFrames) Then
+             
+        FormatCellOverlapError thisCell
+        FormatCellOverlapError nextCell
+        
+    End If
+              
+
+End Function
+
+'Formats a cell if a TC overlap error is found
+Private Function FormatCellOverlapError(aCell As Range)
+
+    aCell.Interior.Color = RGB(255, 0, 0)
+    aCell.Font.Bold = True
+
+End Function
+
+'Formats a cell for no error
+Private Function FormatCellOK(aCell As Range)
+
+    aCell.Interior.ColorIndex = 0
+    aCell.Font.Color = RGB(0, 0, 0)
+    aCell.Font.Bold = False
+    
+End Function
+
+'Formats a cell for a TC formatting, validation error
+Private Function FormatCellTCValidationError(aCell As Range)
+
+    aCell.Interior.Color = RGB(255, 255, 0)
+    aCell.Font.Color = RGB(0, 0, 0)
+
+End Function
+
+
+Sub ClearErrorLog()
+
+    'TextBoxes("Text Box 13").text = ""
+
+End Sub
+
+
+
+'Formats the cell as non drop frame
+Private Function FormatCellNonDropFrame(aCell As Range)
+    
+    aCell.Font.Italic = True
+    aCell.HorizontalAlignment = xlRight
+
+End Function
+
+'Formats the cell as drop frame
+Private Function FormatCellDropFrame(aCell As Range)
+    
+    aCell.Font.Italic = False
+    aCell.HorizontalAlignment = xlLeft
+
+End Function
+
+Function FormatDurationCell(aCell As Range)
+
+    Dim duration As Double
+    
+    duration = aCell.Value
+
+    aCell.NumberFormat = "0.00"
+
+    If duration < 0.3 Then
+    
+       aCell.Interior.Color = RGB(255, 0, 0)
+    
+    ElseIf duration < 1 Then
+
+          aCell.Interior.Color = RGB(255, 255, 0)
+          
+    Else
+          
+          'aCell.Interior.ColorIndex = 0
+          aCell.Interior.Color = RGB(0, 255, 0)
+    
+    End If
+
+End Function
+
+Function FormatWordsPerSecondCell(aCell As Range)
+
+    Dim wps As Double
+    
+    wps = aCell.Value
+
+    aCell.NumberFormat = "0.00"
+    
+    If wps > WordsPerSecondRedThreshold Then
+    
+       aCell.Interior.Color = RGB(255, 0, 0)
+    
+    ElseIf wps > WordsPerSecondYellowThreshold Then
+
+          aCell.Interior.Color = RGB(255, 255, 0)
+          
+    Else
+          
+           'aCell.Interior.ColorIndex = 0
+          aCell.Interior.Color = RGB(0, 255, 0)
+    
+    End If
+    
+
+End Function
+
+
+Function CountWords(text As String)
+
+    Dim WordCount As Long
+    Dim S As String
+    Dim N As Long
+   
+    
+        S = Trim(text)
+        
+        N = 0
+        
+        If S <> vbNullString Then
+        
+            'Had to use Application.substitute instead of replace for this to work on mac
+            N = Len(S) - Len(Application.Substitute(S, " ", "")) + 1
+            
+        End If
+        
+        WordCount = WordCount + N
+   
+   CountWords = WordCount
+   
+    
+End Function
+
+Private Function GetExportFileNameText()
+
+    GetExportFileNameText = ThisWorkbook.Path & "\" & Left(ThisWorkbook.Name, Len(ThisWorkbook.Name) - 3) & "txt"
+
+End Function
+
+Private Function GetExportFileNameXML()
+
+    GetExportFileNameXML = ThisWorkbook.Path & "\" & Left(ThisWorkbook.Name, Len(ThisWorkbook.Name) - 3) & "xml"
+
+End Function
+
+Sub ExportForYouTubePC()
+
+    ExportForYouTubeHelper False
+
+End Sub
+
+Sub ExportForYouTubeMac()
+
+    ExportForYouTubeHelper True
+
+End Sub
+
+
+Sub ExportForYouTubeHelper(forMac As Boolean)
+
+    Dim lastRow As Integer
+    Dim firstRow As Integer
+    Dim subtitleText As String
+
+    Dim lastTCCell As Range
+    Set lastTCCell = Range(firstTCCell)
+    GetLastUsedCell lastTCCell
+    
+    lastRow = lastTCCell.row
+    firstRow = StartTCRow
+
+
+    Dim MyFile As String
+    
+    MyFile = GetExportFileNameText
+    
+    If forMac Then
+    
+        MyFile = Application.Substitute(MyFile, "\", ":")
+    
+    End If
+    
+    
+    fnum = FreeFile()
+    
+    Open MyFile For Output As fnum
+    
+    On Error GoTo CloseFile:
+   
+    For i = StartTCRow To lastRow
+    
+        subtitleText = ""
+    
+        If Cells(1, TitleTextColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = Cells(i, TitleTextColumn).text
+    
+        End If
+    
+        If Cells(1, SpeakerIDColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpeakerIDColumn).text
+    
+        End If
+    
+        If Cells(1, SpokenWordsColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpokenWordsColumn).text
+    
+        End If
+
+        startTC = TCToMillisecondsFormat(Cells(i, StartTCColumn).Value)
+        endTC = TCToMillisecondsFormat(Cells(i, EndTCColumn).Value)
+        
+        Print #fnum, startTC & "," & endTC & vbCrLf & subtitleText & vbCrLf
+    
+    Next i
+    
+CloseFile:
+    
+    MsgBox ("File save to: " & MyFile)
+        
+    Close #fnum
+    
+    Exit Sub
+    
+ErrorHandler:
+
+    MsgBox Err.Description, vbOKOnly + vbCritical, "Error: " & Err.Number
+    Close #fnum
+    Exit Sub
+
+
+End Sub
+
+Sub ExportAsTextPC()
+
+    ExportAsTextHelper False
+
+End Sub
+
+Sub ExportAsTextMac()
+
+    ExportAsTextHelper True
+
+End Sub
+
+
+Sub ExportAsTextHelper(forMac As Boolean)
+
+    Dim lastRow As Integer
+    Dim firstRow As Integer
+    Dim subtitleText As String
+
+    Dim lastTCCell As Range
+    Set lastTCCell = Range(firstTCCell)
+    GetLastUsedCell lastTCCell
+    
+    lastRow = lastTCCell.row
+    firstRow = StartTCRow
+
+
+    Dim MyFile As String
+    
+    MyFile = GetExportFileNameText
+    
+    If forMac Then
+    
+        MyFile = Application.Substitute(MyFile, "\", ":")
+    
+    End If
+    
+    
+    fnum = FreeFile()
+    
+    Open MyFile For Output As fnum
+    
+    On Error GoTo CloseFile:
+   
+    For i = StartTCRow To lastRow
+    
+        subtitleText = ""
+    
+        If Cells(1, TitleTextColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = Cells(i, TitleTextColumn).text
+    
+        End If
+    
+        If Cells(1, SpeakerIDColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpeakerIDColumn).text
+    
+        End If
+    
+        If Cells(1, SpokenWordsColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpokenWordsColumn).text
+    
+        End If
+
+        Print #fnum, Cells(i, StartTCColumn).Value & "," & Cells(i, EndTCColumn) & "," & subtitleText
+    
+    Next i
+    
+CloseFile:
+    
+    MsgBox ("File save to: " & MyFile)
+        
+    Close #fnum
+    
+    Exit Sub
+    
+ErrorHandler:
+
+    MsgBox Err.Description, vbOKOnly + vbCritical, "Error: " & Err.Number
+    Close #fnum
+    Exit Sub
+
+
+End Sub
+
+Sub ExportAsXMLForWebPC()
+
+    ExportAsXMLHelper False
+
+End Sub
+
+Sub ExportAsXMLForWebMac()
+
+    ExportAsXMLHelper True
+
+End Sub
+
+Sub ExportAsXMLHelper(forMac As Boolean)
+ 
+    Dim lastRow As Integer
+    Dim firstRow As Integer
+    Dim subtitleText As String
+    Dim stringToPrint As String
+    Dim startTC As String
+    Dim endTC As String
+    
+
+    Dim lastTCCell As Range
+    Set lastTCCell = Range(firstTCCell)
+    GetLastUsedCell lastTCCell
+    
+    lastRow = lastTCCell.row
+    firstRow = StartTCRow
+
+
+
+    Dim MyFile As String
+    
+    On Error GoTo ErrorHandler
+     
+     MyFile = GetExportFileNameXML
+     
+    If forMac Then
+    
+        MyFile = Application.Substitute(MyFile, "\", ":")
+    
+    End If
+    
+        
+    fnum = FreeFile()
+    
+    Open MyFile For Output As fnum
+   
+    For i = StartTCRow To lastRow
+    
+        subtitleText = ""
+    
+        If Cells(1, TitleTextColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = Cells(i, TitleTextColumn).text
+    
+        End If
+    
+        If Cells(1, SpeakerIDColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpeakerIDColumn).text
+    
+        End If
+    
+        If Cells(1, SpokenWordsColumn).EntireColumn.Hidden = False Then
+    
+            subtitleText = subtitleText & Cells(i, SpokenWordsColumn).text
+    
+        End If
+
+        startTC = TCToMillisecondsFormat(Cells(i, StartTCColumn).Value)
+        endTC = TCToMillisecondsFormat(Cells(i, EndTCColumn).Value)
+        
+        Print #fnum, "<p begin=""" & startTC & """ end=""" & endTC & """>" & subtitleText & "</P>"
+        
+    
+    Next i
+    
+    Close #fnum
+    
+    MsgBox ("File save to: " & MyFile)
+        
+    Exit Sub
+    
+ErrorHandler:
+
+    MsgBox Err.Description, vbOKOnly + vbCritical, "Error: " & Err.Number
+    Close #fnum
+    Exit Sub
+
+End Sub
+
+Function IsFileOpen(FileName As String)
+    Dim iFilenum As Long
+    Dim iErr As Long
+     
+    On Error Resume Next
+    iFilenum = FreeFile()
+    Open FileName For Input Lock Read As #iFilenum
+    Close iFilenum
+    iErr = Err
+    On Error GoTo 0
+     
+    Select Case iErr
+    Case 0:    IsFileOpen = False
+    Case 55:   IsFileOpen = True
+    Case Else: Error iErr
+    End Select
+     
+End Function
